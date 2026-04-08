@@ -1,0 +1,43 @@
+name: deploy-doc-only
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "streamlit/**"
+      - "nginx/conf.d/default.conf"
+      - "docker-compose.yaml"
+  workflow_dispatch:
+
+jobs:
+  deploy-doc:
+    name: Deploy doc route services only
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install deployment tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync openssh-client
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync required files for doc deploy
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '${{ secrets.DEPLOY_PATH }}/streamlit' '${{ secrets.DEPLOY_PATH }}/nginx/conf.d'"
+          rsync -az --delete ./streamlit/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/streamlit/"
+          rsync -az ./nginx/conf.d/default.conf "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/nginx/conf.d/default.conf"
+          rsync -az ./docker-compose.yaml "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/docker-compose.yaml"
+
+      - name: Rebuild and restart doc services
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && docker compose up -d --build streamlit nginx"
