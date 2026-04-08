@@ -11,7 +11,7 @@ default_args = {
 with DAG(
     dag_id="ingestion_online_retail",
     default_args=default_args,
-    start_date=datetime(2026, 1, 1),
+    start_date=datetime(2026, 1, 4),
     schedule_interval=None,   # manuel pour l’instant
     catchup=False,
     tags=["rfm", "ingestion"],
