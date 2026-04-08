@@ -1,0 +1,34 @@
+name: deploy-dags-only
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "dags/**"
+  workflow_dispatch:
+
+jobs:
+  deploy-dags:
+    name: Sync dags folder over SSH
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Ensure remote dags directory exists
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '${{ secrets.DEPLOY_PATH }}/dags'"
+
+      - name: Sync dags only
+        run: |
+          rsync -az --delete \
+            ./dags/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/dags/"
