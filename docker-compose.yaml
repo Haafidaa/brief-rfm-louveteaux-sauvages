@@ -160,12 +160,21 @@ services:
     depends_on:
       airflow-apiserver:
         condition: service_healthy
+      streamlit:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost/healthz"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 20s
+    restart: always
+
+  streamlit:
+    build:
+      context: ./streamlit
+    expose:
+      - "8501"
     restart: always
 
   airflow-scheduler:
