@@ -1,0 +1,54 @@
+name: deploy-production
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy with Docker Compose over SSH
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync project files to server
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Write runtime .env and deploy
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '${{ secrets.DEPLOY_PATH }}'"
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cat > '${{ secrets.DEPLOY_PATH }}/.env' <<'EOF'
+          AIRFLOW_IMAGE_NAME=${{ secrets.AIRFLOW_IMAGE_NAME }}
+          AIRFLOW_UID=${{ secrets.AIRFLOW_UID }}
+          AIRFLOW_PROJ_DIR=${{ secrets.AIRFLOW_PROJ_DIR }}
+          ENV_FILE_PATH=.env
+          AIRFLOW_DB_USER=${{ secrets.AIRFLOW_DB_USER }}
+          AIRFLOW_DB_PASSWORD=${{ secrets.AIRFLOW_DB_PASSWORD }}
+          AIRFLOW_DB_NAME=${{ secrets.AIRFLOW_DB_NAME }}
+          APP_DB_USER=${{ secrets.APP_DB_USER }}
+          APP_DB_PASSWORD=${{ secrets.APP_DB_PASSWORD }}
+          APP_DB_NAME=${{ secrets.APP_DB_NAME }}
+          FERNET_KEY=${{ secrets.FERNET_KEY }}
+          AIRFLOW__API_AUTH__JWT_SECRET=${{ secrets.AIRFLOW__API_AUTH__JWT_SECRET }}
+          AIRFLOW__API_AUTH__JWT_ISSUER=${{ secrets.AIRFLOW__API_AUTH__JWT_ISSUER }}
+          _AIRFLOW_WWW_USER_USERNAME=${{ secrets.AIRFLOW_WWW_USER_USERNAME }}
+          _AIRFLOW_WWW_USER_PASSWORD=${{ secrets.AIRFLOW_WWW_USER_PASSWORD }}
+          NGINX_PUBLIC_PORT=${{ secrets.NGINX_PUBLIC_PORT }}
+          _PIP_ADDITIONAL_REQUIREMENTS=${{ secrets.PIP_ADDITIONAL_REQUIREMENTS }}
+          EOF"
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && docker compose pull && docker compose up -d --remove-orphans"
