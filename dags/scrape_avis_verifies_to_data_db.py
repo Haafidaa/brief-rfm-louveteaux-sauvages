@@ -151,7 +151,7 @@ def scrape_avis_verifies_to_data_db():
         initial_url = current_url
         max_pages = int(Variable.get("AVIS_VERIFIES_MAX_PAGES", default_var="200"))
         visited_urls = set()
-        all_reviews: list[dict] = []
+        page_urls: list[str] = []
         last_page_url = None
         next_url = None
 
@@ -159,19 +159,18 @@ def scrape_avis_verifies_to_data_db():
 
         while current_url and current_url not in visited_urls and page_count < max_pages:
             visited_urls.add(current_url)
+            page_urls.append(current_url)
             page_count += 1
             last_page_url = current_url
             page_html = _download_page(current_url)
-            page_reviews = _parse_reviews(page_html)
-            all_reviews.extend(page_reviews)
-            print(f"Page {page_count}: {len(page_reviews)} avis extraits ({current_url})")
+            print(f"Page {page_count}: pagination detectee ({current_url})")
 
             next_url = _extract_next_page_url(page_html, current_url)
             current_url = next_url
 
-        print(f"Nombre total d'avis extraits (brut): {len(all_reviews)}")
+        print(f"Nombre total de pages a traiter: {len(page_urls)}")
         return {
-            "reviews": all_reviews,
+            "page_urls": page_urls,
             "page_count": page_count,
             "started_from_url": initial_url,
             "cursor_mode": cursor_mode,
@@ -180,32 +179,10 @@ def scrape_avis_verifies_to_data_db():
         }
 
     @task()
-    def transform_reviews(extracted: dict) -> dict:
-        reviews = extracted["reviews"]
-        deduped_by_uid = {}
-        for review in reviews:
-            review_text = (review.get("review_text") or "").strip()
-            author = (review.get("author") or "").strip()
-            review["review_text"] = re.sub(r"\s+", " ", review_text)
-            review["author"] = re.sub(r"\s+", " ", author)
-            deduped_by_uid[review["review_uid"]] = review
-
-        transformed_reviews = list(deduped_by_uid.values())
-        print(f"Nombre d'avis apres transform (uniques): {len(transformed_reviews)}")
-        return {
-            "reviews": transformed_reviews,
-            "page_count": extracted["page_count"],
-            "started_from_url": extracted["started_from_url"],
-            "cursor_mode": extracted["cursor_mode"],
-            "last_page_url": extracted["last_page_url"],
-            "next_url": extracted["next_url"],
-        }
-
-    @task()
     def load_to_postgres(payload: dict) -> dict:
-        reviews = payload["reviews"]
-        if not reviews:
-            print("Aucun avis a inserer.")
+        page_urls = payload["page_urls"]
+        if not page_urls:
+            print("Aucune page a traiter.")
             return {"loaded_reviews": 0, "loaded_responses": 0}
 
         hook = PostgresHook(postgres_conn_id="DATA-DB")
@@ -273,41 +250,63 @@ def scrape_avis_verifies_to_data_db():
             updated_at = NOW();
         """
 
-        rows = [
-            (
-                review["review_uid"],
-                review["author"],
-                review["rating"],
-                review["review_date_raw"],
-                review["experience_date_raw"],
-                review["review_text"],
-                review["source"],
-            )
-            for review in reviews
-        ]
-        response_rows = []
-        for review in reviews:
-            for response in review.get("responses", []):
-                response_rows.append(
+        loaded_reviews = 0
+        loaded_responses = 0
+        seen_review_ids: set[str] = set()
+
+        for page_index, page_url in enumerate(page_urls, start=1):
+            page_html = _download_page(page_url)
+            page_reviews = _parse_reviews(page_html)
+            rows = []
+            response_rows = []
+
+            for review in page_reviews:
+                review_uid = review["review_uid"]
+                if review_uid in seen_review_ids:
+                    continue
+                seen_review_ids.add(review_uid)
+
+                review_text = re.sub(r"\s+", " ", (review.get("review_text") or "").strip())
+                author = re.sub(r"\s+", " ", (review.get("author") or "").strip())
+
+                rows.append(
                     (
-                        review["review_uid"],
-                        response["response_rank"],
-                        response["response_header_raw"],
-                        response["response_text_raw"],
+                        review_uid,
+                        author,
+                        review["rating"],
+                        review["review_date_raw"],
+                        review["experience_date_raw"],
+                        review_text,
+                        review["source"],
                     )
                 )
 
-        with conn:
-            with conn.cursor() as cursor:
-                cursor.execute(create_table_sql)
-                cursor.execute(create_responses_table_sql)
-                cursor.executemany(upsert_sql, rows)
-                if response_rows:
-                    cursor.executemany(upsert_response_sql, response_rows)
+                for response in review.get("responses", []):
+                    response_rows.append(
+                        (
+                            review_uid,
+                            response["response_rank"],
+                            response["response_header_raw"],
+                            response["response_text_raw"],
+                        )
+                    )
 
-        print(f"Nombre d'avis upsert en base: {len(rows)}")
-        print(f"Nombre de reponses upsert en base: {len(response_rows)}")
-        return {"loaded_reviews": len(rows), "loaded_responses": len(response_rows)}
+            with conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(create_table_sql)
+                    cursor.execute(create_responses_table_sql)
+                    if rows:
+                        cursor.executemany(upsert_sql, rows)
+                    if response_rows:
+                        cursor.executemany(upsert_response_sql, response_rows)
+
+            loaded_reviews += len(rows)
+            loaded_responses += len(response_rows)
+            print(f"Page {page_index}/{len(page_urls)} chargee: {len(rows)} avis, {len(response_rows)} reponses")
+
+        print(f"Nombre total d'avis upsert en base: {loaded_reviews}")
+        print(f"Nombre total de reponses upsert en base: {loaded_responses}")
+        return {"loaded_reviews": loaded_reviews, "loaded_responses": loaded_responses}
 
     @task()
     def persist_etl_state(extracted: dict, loaded: dict) -> None:
@@ -326,8 +325,7 @@ def scrape_avis_verifies_to_data_db():
         Variable.set("AVIS_VERIFIES_NEXT_URL", extracted["next_url"] or "")
 
     extracted = extract_reviews()
-    transformed = transform_reviews(extracted)
-    loaded = load_to_postgres(transformed)
+    loaded = load_to_postgres(extracted)
     persist_etl_state(extracted, loaded)
 
 
