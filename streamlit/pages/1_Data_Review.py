@@ -118,6 +118,25 @@ if rating_filter:
 if search_text:
     filtered = filtered[filtered["review_text"].fillna("").str.contains(search_text, case=False)]
 
+dated = filtered.dropna(subset=["review_date_parsed", "rating"]).copy()
+if not dated.empty:
+    last_date = dated["review_date_parsed"].max()
+    week_start = last_date - pd.Timedelta(days=7)
+    last_week_avg = dated.loc[dated["review_date_parsed"] >= week_start, "rating"].mean()
+    st.metric("Moyenne note (7 derniers jours)", f"{last_week_avg:.2f}/5")
+
+    weekly_ratings = (
+        dated.set_index("review_date_parsed")
+        .resample("W-MON")["rating"]
+        .mean()
+        .reset_index()
+        .rename(columns={"review_date_parsed": "semaine", "rating": "note_moyenne"})
+    )
+    st.markdown("### Evolution hebdomadaire des notes")
+    st.line_chart(weekly_ratings.set_index("semaine")["note_moyenne"])
+else:
+    st.info("Pas assez de dates exploitables pour calculer l'evolution des notes.")
+
 st.markdown("### Avis")
 st.dataframe(
     filtered[
