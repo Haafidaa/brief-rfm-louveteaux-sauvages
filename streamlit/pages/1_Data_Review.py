@@ -57,8 +57,8 @@ def load_reviews_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     return reviews_df, responses_df
 
 
-st.set_page_config(page_title="Data Review", layout="wide")
-st.title("Data Review - Avis Verifies")
+st.set_page_config(page_title="Avis Verifie POC", layout="wide")
+st.title("Avis Verifie POC")
 st.caption("Visualisation des avis et des reponses stockes en base.")
 
 if st.button("Actualiser les donnees"):
