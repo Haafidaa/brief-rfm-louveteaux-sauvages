@@ -102,10 +102,16 @@ def load_reviews_data() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 st.set_page_config(page_title="Avis Verifie POC", layout="wide")
-st.title("Avis Verifie POC")
-st.caption("Visualisation des avis et des reponses stockes en base.")
 
-if st.button("Actualiser les donnees"):
+header_left, header_right = st.columns([4, 1], vertical_alignment="top")
+with header_left:
+    st.title("Avis Verifie POC")
+    st.caption("Visualisation des avis et des reponses stockes en base.")
+with header_right:
+    st.markdown("<div style='height: 0.75rem;'></div>", unsafe_allow_html=True)
+    refresh_clicked = st.button("Actualiser les donnees", use_container_width=True)
+
+if refresh_clicked:
     load_reviews_data.clear()
 
 try:
