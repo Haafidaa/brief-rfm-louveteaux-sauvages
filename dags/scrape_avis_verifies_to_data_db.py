@@ -18,6 +18,14 @@ def _extract_first(pattern: str, text: str) -> str | None:
     return html.unescape(match.group(1)).strip()
 
 
+def _strip_html_tags(text: str | None) -> str | None:
+    if text is None:
+        return None
+    no_tags = re.sub(r"<[^>]+>", " ", text, flags=re.DOTALL)
+    normalized = re.sub(r"\s+", " ", html.unescape(no_tags)).strip()
+    return normalized or None
+
+
 def _parse_reviews(page_html: str) -> list[dict]:
     starts = [m.start() for m in re.finditer(r'<li id="reviews__item__\d+" class="skp-review-item"', page_html)]
     if not starts:
@@ -36,26 +44,30 @@ def _parse_reviews(page_html: str) -> list[dict]:
         review_date = _extract_first(r'<p class="skp-review-item__date">\s*(.*?)\s*</p>', block)
         review_text = _extract_first(r'<p class="skp-review-item__text[^"]*">\s*(.*?)\s*</p>', block)
         experience_date = _extract_first(r'<p class="skp-review-item__summary">\s*Expérience du:\s*(.*?)\s*</p>', block)
-        moderation_blocks = re.findall(
-            r'<div class="skp-review-moderation[^"]*"[^>]*>(.*?)</div>\s*</div>\s*</div>',
+        moderation_headers = re.findall(
+            r'<p class="skp-review-moderation__header">\s*(.*?)\s*</p>',
+            block,
+            flags=re.DOTALL,
+        )
+        moderation_texts = re.findall(
+            r'<div class="skp-review-moderation__text">\s*(.*?)\s*</div>',
             block,
             flags=re.DOTALL,
         )
         responses = []
-        for response_rank, moderation_block in enumerate(moderation_blocks, start=1):
-            response_header = _extract_first(
-                r'<p class="skp-review-moderation__header">\s*(.*?)\s*</p>',
-                moderation_block,
+        response_count = max(len(moderation_headers), len(moderation_texts))
+        for response_rank in range(response_count):
+            response_header = _strip_html_tags(
+                moderation_headers[response_rank] if response_rank < len(moderation_headers) else None
             )
-            response_text = _extract_first(
-                r'<div class="skp-review-moderation__text">\s*(.*?)\s*</div>',
-                moderation_block,
+            response_text = _strip_html_tags(
+                moderation_texts[response_rank] if response_rank < len(moderation_texts) else None
             )
             if not response_header and not response_text:
                 continue
             responses.append(
                 {
-                    "response_rank": response_rank,
+                    "response_rank": response_rank + 1,
                     "response_header_raw": response_header,
                     "response_text_raw": response_text,
                 }
@@ -81,8 +93,18 @@ def _parse_reviews(page_html: str) -> list[dict]:
 
 
 def _extract_next_page_url(page_html: str, current_url: str) -> str | None:
+    # Preferred source: HTML head pagination link.
+    rel_next_match = re.search(
+        r'<link[^>]*rel="next"[^>]*href="([^"]+)"',
+        page_html,
+        flags=re.DOTALL,
+    )
+    if rel_next_match:
+        return urljoin(current_url, html.unescape(rel_next_match.group(1)).strip())
+
+    # Fallback source: next arrow in pagination controls.
     match = re.search(
-        r'<a[^>]*class="[^"]*skp-pagination__arrow[^"]*skp-pagination__arrow--next[^"]*"[^>]*href="([^"]+)"',
+        r'<a[^>]*class="[^"]*skp-pagination__arrow--next[^"]*"[^>]*href="([^"]+)"',
         page_html,
         flags=re.DOTALL,
     )
