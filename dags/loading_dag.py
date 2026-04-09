@@ -1,7 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
-from utils.load_rfm import run_loading
+from dags.utils.load import run_loading
 
 default_args = {
     "owner": "airflow",

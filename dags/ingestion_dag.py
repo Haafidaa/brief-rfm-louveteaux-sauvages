@@ -1,7 +1,7 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
-from utils.ingest_data import run_ingestion
+from dags.utils.ingest_data import run_ingestion
 
 default_args = {
     "owner": "airflow",
