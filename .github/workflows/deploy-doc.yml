@@ -35,7 +35,7 @@ jobs:
       - name: Sync required files for doc deploy
         run: |
           ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "mkdir -p '${{ secrets.DEPLOY_PATH }}/streamlit' '${{ secrets.DEPLOY_PATH }}/nginx/conf.d'"
-          rsync -az --delete ./streamlit/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/streamlit/"
+          rsync -az --delete --exclude ".streamlit/secrets.toml" ./streamlit/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/streamlit/"
           rsync -az ./nginx/conf.d/default.conf "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/nginx/conf.d/default.conf"
           rsync -az ./docker-compose.yaml "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/docker-compose.yaml"
 
