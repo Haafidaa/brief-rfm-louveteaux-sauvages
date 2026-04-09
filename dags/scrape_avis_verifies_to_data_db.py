@@ -4,6 +4,7 @@ import re
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+import pendulum
 from airflow.decorators import dag, task
 from airflow.models import Variable
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -296,7 +297,7 @@ def scrape_avis_verifies_to_data_db():
             "page_count": extracted["page_count"],
             "loaded_reviews": loaded["loaded_reviews"],
             "loaded_responses": loaded["loaded_responses"],
-            "updated_at": datetime.now("UTC").to_iso8601_string(),
+            "updated_at": pendulum.now("UTC").to_iso8601_string(),
         }
         Variable.set("AVIS_VERIFIES_LAST_RUN_META", json.dumps(run_meta))
         # Keep pagination cursor in a dedicated variable for ETL continuity.
