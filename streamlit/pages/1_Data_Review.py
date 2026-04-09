@@ -92,6 +92,27 @@ rating_filter = st.multiselect("Filtrer par note", options=rating_values, defaul
 search_text = st.text_input("Filtrer par mot-cle dans le texte d'avis")
 
 filtered = reviews_df.copy()
+filtered["review_date_parsed"] = pd.to_datetime(filtered["review_date_raw"], errors="coerce", dayfirst=True)
+
+min_date = filtered["review_date_parsed"].min()
+max_date = filtered["review_date_parsed"].max()
+if pd.notna(min_date) and pd.notna(max_date):
+    selected_dates = st.date_input(
+        "Filtrer par periode de date d'avis",
+        value=(min_date.date(), max_date.date()),
+        min_value=min_date.date(),
+        max_value=max_date.date(),
+    )
+    if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+        start_date, end_date = selected_dates
+        filtered = filtered[
+            filtered["review_date_parsed"].between(
+                pd.Timestamp(start_date),
+                pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1),
+            )
+            | filtered["review_date_parsed"].isna()
+        ]
+
 if rating_filter:
     filtered = filtered[filtered["rating"].isin(rating_filter)]
 if search_text:
