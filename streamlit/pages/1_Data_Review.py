@@ -5,14 +5,20 @@ import psycopg2
 import streamlit as st
 
 
+def _cfg(name: str, default: str = "") -> str:
+    if name in st.secrets:
+        return str(st.secrets[name])
+    return os.getenv(name, default)
+
+
 @st.cache_data(ttl=60)
 def load_reviews_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     connection = psycopg2.connect(
-        host=os.getenv("APP_DB_HOST", "postgres-db"),
-        port=int(os.getenv("APP_DB_PORT", "5432")),
-        user=os.getenv("APP_DB_USER", ""),
-        password=os.getenv("APP_DB_PASSWORD", ""),
-        dbname=os.getenv("APP_DB_NAME", "rfm"),
+        host=_cfg("APP_DB_HOST", "postgres-db"),
+        port=int(_cfg("APP_DB_PORT", "5432")),
+        user=_cfg("APP_DB_USER", ""),
+        password=_cfg("APP_DB_PASSWORD", ""),
+        dbname=_cfg("APP_DB_NAME", "rfm"),
     )
     try:
         reviews_df = pd.read_sql_query(
