@@ -9,15 +9,38 @@ load_dotenv()
 
 log = get_logger("db_utils")
 
+CONN_ID = os.getenv("AIRFLOW_CONN_ID", "DATA-DB")
+
 # ─────────────────────────────────────────────────────────
-# PARAMÈTRES DEPUIS .env
+# CREDENTIALS
 # ─────────────────────────────────────────────────────────
 
-DB_HOST     = os.getenv("POSTGRES_HOST",     "localhost")
-DB_PORT     = os.getenv("POSTGRES_PORT",     "5432")
-DB_NAME     = os.getenv("POSTGRES_DB",       "rfm_db")
-DB_USER     = os.getenv("POSTGRES_USER",     "postgres")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+def _get_credentials() -> dict:
+    """
+    Détecte l'environnement :
+    - Airflow disponible → BaseHook.get_connection(CONN_ID)
+    - Local              → .env
+    """
+    try:
+        from airflow.hooks.base import BaseHook
+        conn = BaseHook.get_connection(CONN_ID)
+        log.debug(f"Credentials depuis Airflow '{CONN_ID}'")
+        return {
+            "host"    : conn.host,
+            "port"    : conn.port or 5432,
+            "dbname"  : conn.schema,
+            "user"    : conn.login,
+            "password": conn.password,
+        }
+    except Exception:
+        log.debug("Fallback → credentials depuis .env")
+        return {
+            "host"    : os.getenv("POSTGRES_HOST",     "localhost"),
+            "port"    : int(os.getenv("POSTGRES_PORT", "5432")),
+            "dbname"  : os.getenv("POSTGRES_DB",       "rfm_db"),
+            "user"    : os.getenv("POSTGRES_USER",     "postgres"),
+            "password": os.getenv("POSTGRES_PASSWORD", "postgres"),
+        }
 
 
 # ─────────────────────────────────────────────────────────
@@ -25,19 +48,21 @@ DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 # ─────────────────────────────────────────────────────────
 
 def create_database():
-    log.info(f"Vérification de la base '{DB_NAME}'")
+    creds = _get_credentials()
+    log.info(f"Vérification de la base '{creds['dbname']}'")
     conn = psycopg2.connect(
-        host=DB_HOST, port=DB_PORT, dbname="postgres",
-        user=DB_USER, password=DB_PASSWORD,
+        host=creds["host"], port=creds["port"],
+        dbname="postgres",
+        user=creds["user"], password=creds["password"],
     )
     conn.autocommit = True
     with conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,))
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (creds["dbname"],))
         if not cur.fetchone():
-            cur.execute(f"CREATE DATABASE {DB_NAME}")
-            log.info(f"Base '{DB_NAME}' créée")
+            cur.execute(f"CREATE DATABASE {creds['dbname']}")
+            log.info(f"Base '{creds['dbname']}' créée")
         else:
-            log.info(f"Base '{DB_NAME}' existe déjà")
+            log.info(f"Base '{creds['dbname']}' existe déjà")
     conn.close()
 
 
@@ -46,14 +71,12 @@ def create_database():
 # ─────────────────────────────────────────────────────────
 
 def create_schemas(conn):
-    """Crée les schémas raw, clean, mart si inexistants."""
     log.info("Création des schémas")
     execute_query(conn, """
         CREATE SCHEMA IF NOT EXISTS raw;
         CREATE SCHEMA IF NOT EXISTS clean;
-        CREATE SCHEMA IF NOT EXISTS mart;
     """)
-    log.info("Schémas raw / clean / mart prêts")
+    log.info("Schémas raw / clean prêts")
 
 
 # ─────────────────────────────────────────────────────────
@@ -61,21 +84,13 @@ def create_schemas(conn):
 # ─────────────────────────────────────────────────────────
 
 def get_connection():
-    """Retourne une connexion psycopg2 vers rfm_db."""
-    log.debug(f"Connexion à {DB_HOST}:{DB_PORT}/{DB_NAME}")
-    return psycopg2.connect(
-        host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
-        user=DB_USER, password=DB_PASSWORD,
-    )
-
+    creds = _get_credentials()
+    return psycopg2.connect(**creds)
 
 
 def get_engine():
-    """Retourne un engine SQLAlchemy vers rfm_db (pour pandas to_sql)."""
-    url = (
-        f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}"
-        f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    )
+    c = _get_credentials()
+    url = f"postgresql+psycopg2://{c['user']}:{c['password']}@{c['host']}:{c['port']}/{c['dbname']}"
     return create_engine(url)
 
 
