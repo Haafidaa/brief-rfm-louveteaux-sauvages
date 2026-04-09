@@ -11,6 +11,50 @@ def _cfg(name: str, default: str = "") -> str:
     return os.getenv(name, default)
 
 
+_FR_MONTHS = {
+    "janv": 1,
+    "fevr": 2,
+    "fev": 2,
+    "mars": 3,
+    "avr": 4,
+    "mai": 5,
+    "juin": 6,
+    "juil": 7,
+    "aout": 8,
+    "sept": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+
+
+def _parse_review_date_fr(value: str) -> pd.Timestamp:
+    if value is None:
+        return pd.NaT
+    text = str(value).strip().lower()
+    text = (
+        text.replace("é", "e")
+        .replace("è", "e")
+        .replace("ê", "e")
+        .replace("à", "a")
+        .replace("û", "u")
+        .replace(".", "")
+    )
+    parts = text.split()
+    if len(parts) != 3:
+        return pd.NaT
+    day_raw, month_raw, year_raw = parts
+    if not day_raw.isdigit() or not year_raw.isdigit():
+        return pd.NaT
+    month = _FR_MONTHS.get(month_raw)
+    if month is None:
+        return pd.NaT
+    try:
+        return pd.Timestamp(year=int(year_raw), month=month, day=int(day_raw))
+    except ValueError:
+        return pd.NaT
+
+
 @st.cache_data(ttl=60)
 def load_reviews_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     connection = psycopg2.connect(
@@ -87,56 +131,76 @@ if total_reviews == 0:
     st.warning("Aucune donnee disponible. Lance le DAG de scraping dans Airflow.")
     st.stop()
 
-rating_values = sorted(reviews_df["rating"].dropna().unique().tolist())
-rating_filter = st.multiselect("Filtrer par note", options=rating_values, default=rating_values)
-search_text = st.text_input("Filtrer par mot-cle dans le texte d'avis")
-
 filtered = reviews_df.copy()
-filtered["review_date_parsed"] = pd.to_datetime(filtered["review_date_raw"], errors="coerce", dayfirst=True)
+filtered["review_date_parsed"] = filtered["review_date_raw"].apply(_parse_review_date_fr)
 
-min_date = filtered["review_date_parsed"].min()
-max_date = filtered["review_date_parsed"].max()
-if pd.notna(min_date) and pd.notna(max_date):
-    selected_dates = st.date_input(
-        "Filtrer par periode de date d'avis",
-        value=(min_date.date(), max_date.date()),
-        min_value=min_date.date(),
-        max_value=max_date.date(),
-    )
-    if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-        start_date, end_date = selected_dates
-        filtered = filtered[
-            filtered["review_date_parsed"].between(
-                pd.Timestamp(start_date),
-                pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1),
+left_col, right_col = st.columns([1, 2], gap="large")
+
+with left_col:
+    st.markdown("### Filtres")
+    rating_values = sorted(filtered["rating"].dropna().unique().tolist())
+    rating_filter = st.multiselect("1) Note", options=rating_values, default=rating_values)
+    search_text = st.text_input("2) Mot cle")
+
+    min_date = filtered["review_date_parsed"].min()
+    max_date = filtered["review_date_parsed"].max()
+    start_date = None
+    end_date = None
+    if pd.notna(min_date) and pd.notna(max_date):
+        c_start, c_end = st.columns(2)
+        with c_start:
+            start_date = st.date_input(
+                "3.1) Date debut",
+                value=min_date.date(),
+                min_value=min_date.date(),
+                max_value=max_date.date(),
             )
-            | filtered["review_date_parsed"].isna()
-        ]
+        with c_end:
+            end_date = st.date_input(
+                "3.2) Date fin",
+                value=max_date.date(),
+                min_value=min_date.date(),
+                max_value=max_date.date(),
+            )
+        if start_date > end_date:
+            st.warning("La date debut doit etre <= date fin.")
+    else:
+        st.info("Dates d'avis non disponibles pour le filtre.")
 
 if rating_filter:
     filtered = filtered[filtered["rating"].isin(rating_filter)]
 if search_text:
     filtered = filtered[filtered["review_text"].fillna("").str.contains(search_text, case=False)]
 
-dated = filtered.dropna(subset=["review_date_parsed", "rating"]).copy()
-if not dated.empty:
-    last_date = dated["review_date_parsed"].max()
-    week_start = last_date - pd.Timedelta(days=7)
-    last_week_avg = dated.loc[dated["review_date_parsed"] >= week_start, "rating"].mean()
-    st.metric("Moyenne note (7 derniers jours)", f"{last_week_avg:.2f}/5")
+if start_date is not None and end_date is not None and start_date <= end_date:
+    filtered = filtered[
+        filtered["review_date_parsed"].between(
+            pd.Timestamp(start_date),
+            pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1),
+        )
+    ]
 
-    weekly_ratings = (
-        dated.set_index("review_date_parsed")
-        .resample("W-MON")["rating"]
-        .mean()
-        .reset_index()
-        .rename(columns={"review_date_parsed": "semaine", "rating": "note_moyenne"})
-    )
+with right_col:
     st.markdown("### Evolution hebdomadaire des notes")
-    st.line_chart(weekly_ratings.set_index("semaine")["note_moyenne"])
-else:
-    st.info("Pas assez de dates exploitables pour calculer l'evolution des notes.")
+    dated = filtered.dropna(subset=["review_date_parsed", "rating"]).copy()
+    if not dated.empty:
+        last_date = dated["review_date_parsed"].max()
+        week_start = last_date - pd.Timedelta(days=7)
+        last_week_avg = dated.loc[dated["review_date_parsed"] >= week_start, "rating"].mean()
+        st.metric("Moyenne note (7 derniers jours)", f"{last_week_avg:.2f}/5")
 
+        weekly_ratings = (
+            dated.set_index("review_date_parsed")
+            .resample("W-MON")["rating"]
+            .mean()
+            .reset_index()
+            .rename(columns={"review_date_parsed": "semaine", "rating": "note_moyenne"})
+        )
+        st.line_chart(weekly_ratings.set_index("semaine")["note_moyenne"])
+    else:
+        st.info("Pas assez de dates exploitables pour calculer l'evolution des notes.")
+
+st.markdown("---")
 st.markdown("### Avis")
 st.dataframe(
     filtered[
